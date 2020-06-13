@@ -1,0 +1,3 @@
+package responsetype
+
+// TODO
