@@ -58,6 +58,8 @@ func ResponseHandler(handler Handler, preferredType ResponseType, allowedTypes .
 			cResp, ok = resp.(responsetype.Response)
 
 			if !ok {
+				log.WithField("responsetype", t).Error("Unrecognized response, serving default error")
+
 				cResp = t.DefaultError()
 			}
 		}

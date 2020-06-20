@@ -45,6 +45,31 @@ func (jmce JSONMarshalCoderError) MarshalJSON() ([]byte, error) {
 	return []byte("\"" + jmce.Error() + "\""), nil
 }
 
+type JSONMarshalMock string
+
+func (jmm JSONMarshalMock) MarshalJSON() ([]byte, error) {
+	return []byte("\"" + jmm + "\""), nil
+}
+
+type JSONMarshalCoderMock string
+
+func (jmcm JSONMarshalCoderMock) GetCode() int {
+	return len(string(jmcm))
+}
+
+func (jmcm JSONMarshalCoderMock) MarshalJSON() ([]byte, error) {
+	return []byte("\"" + jmcm + "\""), nil
+}
+
+type JSONResponsableMock struct {
+	code int
+	body interface{}
+}
+
+func (jr JSONResponsableMock) ToJSON() *JSON {
+	return &JSON{Code: jr.code, Body: jr.body}
+}
+
 type LogMock struct {
 	*logrus.Entry
 }
@@ -176,11 +201,25 @@ func TestJSON_GetAcceptedType(t *testing.T) {
 	}
 }
 
+func TestJSON_String(t *testing.T) {
+	str := (&JSON{}).String()
+
+	expected := "application/json"
+
+	if str != expected {
+		t.Errorf("Invalid value for accepted types, expected %s, got %s", expected, str)
+	}
+}
+
 func TestJSON_Unmarshal(t *testing.T) {
 	root := &JSON{}
 
 	expectResponse(t, root.Unmarshal(nil), http.StatusNoContent, []byte(""))
 	expectResponse(t, root.Unmarshal(true), -1, nil)
+
+	jr := &JSONResponsableMock{code: http.StatusUnauthorized, body: "testjsonresponsable"}
+	expectResponse(t, root.Unmarshal(jr), http.StatusUnauthorized, []byte("testjsonresponsable"))
+
 	expectResponse(t, root.Unmarshal(""), http.StatusNoContent, nil)
 	expectResponse(t, root.Unmarshal("test"), http.StatusOK, []byte("test"))
 
@@ -205,6 +244,13 @@ func TestJSON_Unmarshal(t *testing.T) {
 	expectResponse(t, root.Unmarshal(CoderError(429)), http.StatusTooManyRequests, []byte("{\"code\":429,\"description\":\"Internal Server Error\"}"))
 	expectResponse(t, root.Unmarshal(JSONMarshalError("jsonmarshalerror")), http.StatusInternalServerError, []byte("\"testerror: jsonmarshalerror\""))
 	expectResponse(t, root.Unmarshal(JSONMarshalCoderError("jsonmarshalcodererror")), 21, []byte("\"testerror: jsonmarshalcodererror\""))
+
+	expectResponse(t, root.Unmarshal(JSONMarshalMock("jsonmarshalmock")), http.StatusOK, []byte("\"jsonmarshalmock\""))
+	expectResponse(t, root.Unmarshal(JSONMarshalCoderMock("jsonmarshalcodermock")), 20, []byte("\"jsonmarshalcodermock\""))
+
+	expectResponse(t, root.Unmarshal(map[string]string{"jsonmarshalmap": "jsonmarshalmapvalue", "second": "secondvalue"}), http.StatusOK, []byte("{\"jsonmarshalmap\":\"jsonmarshalmapvalue\",\"second\":\"secondvalue\"}"))
+	expectResponse(t, root.Unmarshal([]string{"jsonmarshalslice", "second"}), http.StatusOK, []byte("[\"jsonmarshalslice\",\"second\"]"))
+	expectResponse(t, root.Unmarshal([2]string{"jsonmarshalarray", "second"}), http.StatusOK, []byte("[\"jsonmarshalarray\",\"second\"]"))
 
 	// TODO map
 	// TODO slice
@@ -382,6 +428,114 @@ func TestJSON_Handle(t *testing.T) {
 
 	if got != 1 {
 		t.Errorf("Log not called, expected %d, got %d", 1, got)
+	}
+}
+
+func TestJSONResponsable(t *testing.T) {
+	r := &JSONResponsableMock{code: http.StatusUnauthorized, body: "hello"}
+
+	jr := r.ToJSON()
+
+	ejrc := http.StatusUnauthorized
+	jrc := jr.Code
+
+	if jrc != ejrc {
+		t.Errorf("Invalid code returned, expected %d, got %d", ejrc, jrc)
+	}
+
+	ejrb := "hello"
+	jrb := jr.Body
+
+	if jrb != ejrb {
+		t.Errorf("Invalid code returned, expected %s, got %s", ejrb, jrb)
+	}
+}
+
+func TestNewJSONError(t *testing.T) {
+	err := errors.New("testerror")
+
+	rt := NewJSONError(http.StatusFailedDependency, "testbody", err)
+
+	ec := http.StatusFailedDependency
+	c := rt.Code
+
+	if c != ec {
+		t.Errorf("invalid new json code, expected %d, got %d", ec, c)
+	}
+
+	ee := err.Error()
+	e := rt.err.Error()
+
+	if e != ee {
+		t.Errorf("invalid new json error, expected %s, got %s", ee, e)
+	}
+
+	b, ok := rt.Body.(JSONError)
+
+	if !ok {
+		t.Errorf("invalid new json body, expected json error")
+	}
+
+	c = b.Code
+
+	if c != ec {
+		t.Errorf("invalid new json error code, expected %d, got %d", ec, c)
+	}
+
+	ed := "testbody"
+	d := b.Description
+
+	if d != ed {
+		t.Errorf("invalid new json error body, expected %s, got %s", ed, d)
+	}
+
+	e = b.Err.Error()
+
+	if e != ee {
+		t.Errorf("invalid new json error error, expected %s, got %s", ee, e)
+	}
+
+	rt = NewJSONError(12, nil, err)
+
+	b, ok = rt.Body.(JSONError)
+
+	if !ok {
+		t.Errorf("invalid new json body, expected json error")
+	}
+
+	ec = 12
+	c = b.Code
+
+	if c != ec {
+		t.Errorf("invalid new json error code, expected %d, got %d", ec, c)
+	}
+
+	d = b.Description
+
+	if d != nil {
+		t.Errorf("invalid new json error description, expected nil, got %s", d)
+	}
+
+	rt = NewJSONError(http.StatusInsufficientStorage, nil, err)
+
+	b, ok = rt.Body.(JSONError)
+
+	if !ok {
+		t.Errorf("invalid new json body, expected json error")
+	}
+
+	ec = http.StatusInsufficientStorage
+	c = b.Code
+
+	if c != ec {
+		t.Errorf("invalid new json error code, expected %d, got %d", ec, c)
+	}
+
+	ed = http.StatusText(http.StatusInsufficientStorage)
+	d = b.Description
+
+	if d != ed {
+		t.Errorf("invalid new json error description, expected %s, got %s", ed, d)
 	}
 }
 

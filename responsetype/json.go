@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"peterdekok.nl/gotools/logger"
+	"reflect"
 )
 
 type JSON struct {
@@ -13,6 +14,10 @@ type JSON struct {
 	Body interface{}
 	err  error
 	log  logger.Logger
+}
+
+type JSONResponsable interface {
+	ToJSON() *JSON
 }
 
 var (
@@ -103,44 +108,28 @@ func (r JSON) GetContentType() string {
 
 func (r *JSON) Unmarshal(resp interface{}) Response {
 	if resp == nil {
-		return &JSON{
-			Code: http.StatusNoContent,
-			Body: []byte{},
-		}
+		return &JSON{Code: http.StatusNoContent, Body: []byte{}}
 	}
 
-	// The json marshaler interface should in almost all cases take precedence.
-	// TODO json.Marshaler && !resp.(error)
+	if jr, ok := resp.(JSONResponsable); ok {
+		return jr.ToJSON()
+	}
 
 	switch cResp := resp.(type) {
 	case string:
 		if len(cResp) == 0 {
-			return &JSON{
-				Code: http.StatusNoContent,
-				Body: []byte{},
-			}
+			return &JSON{Code: http.StatusNoContent, Body: []byte{}}
 		}
 
-		return &JSON{
-			Code: http.StatusOK,
-			Body: cResp,
-		}
+		return &JSON{Code: http.StatusOK, Body: cResp}
 	case JSON:
 		return &cResp
 	case *JSON:
 		return cResp
 	case JSONError:
-		return &JSON{
-			Code: cResp.Code,
-			Body: cResp,
-			err:  cResp.Err,
-		}
+		return &JSON{Code: cResp.Code, Body: cResp, err:  cResp.Err}
 	case *JSONError:
-		return &JSON{
-			Code: cResp.Code,
-			Body: cResp,
-			err:  cResp.Err,
-		}
+		return &JSON{Code: cResp.Code, Body: cResp, err:  cResp.Err}
 	case int:
 		return &JSON{Code: cResp}
 	case int32:
@@ -154,10 +143,6 @@ func (r *JSON) Unmarshal(resp interface{}) Response {
 	case uint8:
 		return &JSON{Code: int(cResp)}
 	}
-
-	// TODO map
-	// TODO slice
-	// TODO array ??
 
 	// We assume an error adhering to the json.Marshaler interface
 	// will be consumable for public r
@@ -184,9 +169,22 @@ func (r *JSON) Unmarshal(resp interface{}) Response {
 		}
 
 		return j
+	} else if jm, ok := resp.(json.Marshaler); ok {
+		c := http.StatusOK
+
+		if coder, ok := resp.(Coder); ok {
+			c = coder.GetCode()
+		}
+
+		if b, err := json.Marshal(jm); err == nil {
+			return &JSON{Code: c, Body: b}
+		}
 	}
 
-	// TODO?
+	switch reflect.TypeOf(resp).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return &JSON{Code: http.StatusOK, Body: resp}
+	}
 
 	return nil
 }
@@ -213,11 +211,31 @@ func (r *JSON) GetAcceptedType() string {
 	return "application/json"
 }
 
+func (r *JSON) String() string {
+	return r.GetAcceptedType()
+}
+
 // Json error wrapper
 type JSONError struct {
 	Code        int         `json:"code"`
 	Description interface{} `json:"description"`
 	Err         error       `json:"-"`
+}
+
+func NewJSONError(code int, description interface{}, err error) *JSON {
+	if description == nil {
+		stsTxt := http.StatusText(code)
+
+		if len(stsTxt) > 0 {
+			description = stsTxt
+		}
+	}
+
+	return NewJSON(code, JSONError{
+		Code:        code,
+		Description: description,
+		Err:         err,
+	}).WithError(err)
 }
 
 func (je JSONError) GetCode() int {

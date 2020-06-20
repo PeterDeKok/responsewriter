@@ -20,6 +20,7 @@ type TypeHandler interface {
 	GetAcceptedType() string
 	Unmarshal(resp interface{}) Response
 	DefaultError() Response
+	String() string
 }
 
 type ResponseType TypeHandler

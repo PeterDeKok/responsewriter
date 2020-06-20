@@ -41,6 +41,7 @@ type mockResponseType struct {
 }
 
 func (mrt mockResponseType) GetAcceptedType() string                       { return mrt.t }
+func (mrt mockResponseType) String() string                                { return mrt.t }
 func (mrt mockResponseType) Unmarshal(_ interface{}) responsetype.Response { return mrt.resp }
 func (mrt mockResponseType) DefaultError() responsetype.Response           { return mrt.defResp }
 
